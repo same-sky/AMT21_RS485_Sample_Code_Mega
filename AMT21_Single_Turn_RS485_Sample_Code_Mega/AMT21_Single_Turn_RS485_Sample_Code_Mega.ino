@@ -5,7 +5,7 @@
  * Version: 1.0.0.0
  * Date: June 29, 2023
  *
- * This sample code can be used with the Arduino Mega to control the AMT21 encoder.
+ * This sample code can be used with the Arduino Mega to control the AMT21xE encoder.
  * It uses one UART to control the encoder and the the another UART to report back to the PC
  * via the Arduino Serial Monitor.
  * For more information or assistance contact CUI Devices for support.
@@ -62,11 +62,11 @@
  */
 
 /* Serial rates for UART */
-#define BAUDRATE             115200
-#define RS485_BAUDRATE       2000000
+#define USB_BAUDRATE         115200
+#define RS485_BAUDRATE       115200
 
 /* We will use this define macro so we can write code once compatible with 12 or 14 bit encoders */
-#define RESOLUTION            14
+#define RESOLUTION            12
 
 /* The AMT21 encoder is able to have a range of different values for its node address. This allows there
  * to be multiple encoders on on the RS485 bus. The encoder will listen for its node address, and that node
@@ -89,7 +89,7 @@
 #define RS485_TURNS           0x01
 #define RS485_EXT             0x02
 
-/* The RS485 transceiver uses 4 pins to control the state of the differential RS485 lines A/B. To control
+/* The RS485 transceiver uses 2 pins to control the state of the differential RS485 lines A/B. To control
  * the transevier we will put those pins on our digital IO pins. We will define those pins here now. We will get
  * into more information about this later on, but it is important to understand that because of the high speed of the
  * AMT21 encoder, the toggling of these pins must occur very quickly. More information available in the walkthrough online.
@@ -114,11 +114,10 @@ void setup()
   //Set the modes for the RS485 transceiver
   pinMode(RS485_T_RE, OUTPUT);
   pinMode(RS485_T_DE, OUTPUT);
-  //pinMode(RS485_T_DI, OUTPUT);
-  //pinMode(RS485_T_RO, OUTPUT);
+  pinMode(RS485_T_RO, INPUT_PULLUP); //enable pull-up on RX pin so that it is not left floating when the transceiver is in transmit-mode
 
   //Initialize the UART serial connection to the PC
-  Serial.begin(BAUDRATE);
+  Serial.begin(USB_BAUDRATE);
 
   //Initialize the UART link to the RS485 transceiver
   Serial1.begin(RS485_BAUDRATE);
@@ -127,50 +126,86 @@ void setup()
 void loop()
 {
   //create an array of encoder addresses so we can use them in a loop
-  uint8_t addresses[2] = {RS485_ENC0, RS485_ENC1};
+  //uint8_t addresses[2] = {RS485_ENC0, RS485_ENC1};
+  uint8_t addresses[1] = {RS485_ENC0};
 
   for(int encoder = 0; encoder < sizeof(addresses); ++encoder)
   {
-    //create a 16 bit variable to hold the encoders position and give it a default value of 0xFFFF which is our error value
-    uint16_t encoderPosition = 0xFFFF;
-   //let's also create a variable where we can count how many times we've tried to obtain the position in case there are errors
-    uint8_t attempts = 0;
+    //clear whatever is in the read buffer in case there's nonsense in it
+    while (Serial1.available()) Serial1.read();
 
-    //we will use a do-while loop for getting position because we want to start with calling the getposition command first
-    //then repeat it if we get a failure, until we hit our limit number of attempts
-    do
+    setStateRS485(RS485_T_TX); //put the transciver into transmit mode
+    delayMicroseconds(10);   //IO operations take time, let's throw in an arbitrary 10 microsecond delay to make sure the transeiver is ready
+
+    //send the command to get position. All we have to do is send the node address, but we can use the modifier for consistency
+    Serial1.write(addresses[encoder] | RS485_POS);
+
+    //With an AMT21xE (115.2 kbps), we expect a response from the encoder to begin after 11 microseconds. Each byte sent has a start and stop bit,
+    //so each 8-bit byte transmits 10 bits total. So for the AMT21 operating at 115.2 kbps, transmitting the full 20 bit response will take about 174µs.
+    //We expect the response to start after 11µs totalling 185 microseconds from the time we've finished sending data. So we need to put the transceiver
+    //into receive mode within 11µs, but we want to make sure the data has been fully transmitted before we do that or we could cut it off mid transmission.
+    //This code has been tested and optimized for this; porting this code to another device must take all this timing into account.
+
+    //Here we will make sure the data has been transmitted and then toggle the pins for the transceiver
+    //Here we are accessing the avr library to make sure this happens very fast. We could use Serial.flush() which waits for the output to complete
+    //but it takes about 2 microseconds, which gets pretty close to our 3 microsecond window. Instead we want to wait until the serial transmit flag USCR1A completes.
+    while (!(UCSR1A & _BV(TXC1)));
+
+    setStateRS485(RS485_T_RX); //set the transceiver back into receive mode for the encoder response
+
+    //We need to give the encoder enough time to respond, but not too long. In a tightly controlled application we would want to use a timeout counter
+    //to make sure we don't have any issues, but for this demonstration we will just have an arbitrary delay before checking to see if we have data to read.
+    delayMicroseconds(40000000/RS485_BAUDRATE);
+    
+    //Response from encoder should be exactly 2 bytes
+    int bytes_received = Serial1.available();
+    if (bytes_received == 2)
     {
-      //this function gets the encoder position and returns it as a uint16_t
-      encoderPosition = getPositionRS485(addresses[encoder], RESOLUTION);
+      uint16_t currentPosition = Serial1.read(); //low byte comes first
+      currentPosition |= Serial1.read() << 8;    //high byte next, OR it into our 16 bit holder but get the high bit into the proper placeholder
+
+      if (verifyChecksumRS485(currentPosition))
+      {
+        //we got back a good position, so just mask away the checkbits
+        currentPosition &= 0x3FFF;
+
+        //If the resolution is 12-bits, then shift position
+        if (RESOLUTION == 12)
+        {
+          currentPosition = currentPosition >> 2;
+        }
+        Serial.print("Encoder #");
+        Serial.print(encoder, DEC);
+        Serial.print(" position: ");
+        Serial.println(currentPosition, DEC); //print the position in decimal format
+      }
+      else
+      {
+        Serial.print("Encoder #");
+        Serial.print(encoder, DEC);
+        Serial.println(" error: Invalid checksum.");
+      }
     }
-    while (encoderPosition == 0xFFFF && ++attempts < 3);
-
-
-    if (encoderPosition == 0xFFFF) //position is bad, let the user know how many times we tried
+    else
     {
-      Serial.print("Encoder ");
+      Serial.print("Encoder #");
       Serial.print(encoder, DEC);
-      Serial.print(" error. Attempts: ");
-      Serial.print(attempts, DEC); //print out the number in decimal format.
+      Serial.print(" error: Expected to receive 2 bytes. Actually received ");
+      Serial.print(bytes_received, DEC);
+      Serial.println(" bytes.");
     }
-    else //position was good, print to serial stream
-    {
-      Serial.print("Encoder ");
-      Serial.print(encoder, DEC);
-      Serial.print(": ");
-      Serial.print(encoderPosition, DEC); //print the position in decimal format
-    }
-    Serial.write('\n');
+
+    //flush the received serial buffer just in case anything extra got in there
+    while (Serial1.available()) Serial1.read();
   }
 
   //For the purpose of this demo we don't need the position returned that quickly so let's wait a half second between reads
-  //delay() is in milliseconds
   delay(500);
 }
 
 bool verifyChecksumRS485(uint16_t message)
 {
-  //using the equation on the datasheet we can calculate the checksums and then make sure they match what the encoder sent
+  //using the equation on the datasheet we can calculate the checksums and then make sure they match what the encoder sent.
   //checksum is invert of XOR of bits, so start with 0b11, so things end up inverted
   uint16_t checksum = 0x3;
   for(int i = 0; i < 14; i += 2)
@@ -178,75 +213,6 @@ bool verifyChecksumRS485(uint16_t message)
     checksum ^= (message >> i) & 0x3;
   }
   return checksum == (message >> 14);
-}
-
-/*
- * This function gets the absolute position from the AMT21 encoder using the RS485 bus. The AMT21 position includes 2 checkbits to use
- * for position verification. Both 12-bit and 14-bit encoders transfer position via two bytes, giving 16-bits regardless of resolution.
- * For 12-bit encoders the position is left-shifted two bits, leaving the right two bits as zeros. This gives the impression that the encoder
- * is actually sending 14-bits, when it is actually sending 12-bit values, where every number is multiplied by 4.
- * This function takes the pin number of the desired device as an input
- * Error values are returned as 0xFFFF
- */
- uint16_t getPositionRS485(uint8_t address, uint8_t resolution)
-{
-  uint16_t currentPosition = 0xFFFF; // 16-bit response from the encoder
-  bool error = false;                // we will use this instead of having a bunch of nested if statements, initialized to NO ERROR
-
-  //clear whatever is in the read buffer in case there's nonsense in it
-  while (Serial1.available()) Serial1.read();
-
-  setStateRS485(RS485_T_TX); //call the function we use to put the transciver into transmit mode
-  delayMicroseconds(10);   //IO operations take time, let's throw in an arbitrary 10 microsecond delay to make sure the transeiver is ready
-
-  //here is where we send the command to get position. All we have to do is send the node address, but we can use the modifier for consistency
-  Serial1.write(address + RS485_POS);
-
-  //We expect a response from the encoder to begin within 3 microseconds. Each byte sent has a start and stop bit, so each 8-bit byte transmits
-  //10 bits total. So for the AMT21 operating at 2 Mbps, transmitting the full 20 bit response will take about 10 uS. We expect the response
-  //to start after 3 uS totalling 13 microseconds from the time we've finished sending data.
-  //So we need to put the transceiver into receive mode within 3 uS, but we want to make sure the data has been fully transmitted before we
-  //do that or we could cut it off mid transmission. This code has been tested and optimized for this; porting this code to another device must
-  //take all this timing into account.
-
-  //Here we will make sure the data has been transmitted and then toggle the pins for the transceiver
-  //Here we are accessing the avr library to make sure this happens very fast. We could use Serial.flush() which waits for the output to complete
-  //but it takes about 2 microseconds, which gets pretty close to our 3 microsecond window. Instead we want to wait until the serial transmit flag USCR1A completes.
-  while (!(UCSR1A & _BV(TXC1)));
-
-  setStateRS485(RS485_T_RX); //set the transceiver back into receive mode for the encoder response
-
-  //We need to give the encoder enough time to respond, but not too long. In a tightly controlled application we would want to use a timeout counter
-  //to make sure we don't have any issues, but for this demonstration we will just have an arbitrary delay before checking to see if we have data to read.
-  delayMicroseconds(30);
-
-  //Check the input buffer for 2 bytes
-  if (Serial1.available() < 2) error = true;
-
-  //if there wasn't an error
-  if (!error)
-  {
-    currentPosition = Serial1.read();         //low byte comes first
-    currentPosition |= Serial1.read() << 8;   //high byte next, OR it into our 16 bit holder but get the high bit into the proper placeholder
-
-    if (verifyChecksumRS485(currentPosition))
-    {
-      //we got back a good position, so just mask away the checkbits
-      currentPosition &= 0x3FFF;
-    }
-    else
-    {
-      currentPosition = 0xFFFF; //bad position response
-    }
-
-    //If the resolution is 12-bits, and wasn't 0xFFFF, then shift position, otherwise do nothing
-    if ((resolution == 12) && (currentPosition != 0xFFFF)) currentPosition = currentPosition >> 2;
-  }
-
-  //flush the received serial buffer just in case anything extra got in there
-  while (Serial1.available()) Serial1.read();
-
-  return currentPosition;
 }
 
 /*
