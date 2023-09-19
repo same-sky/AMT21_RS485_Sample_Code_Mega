@@ -1,6 +1,7 @@
 # AMT21 Arduino RS-485 Sample Code
 
 ## Table of Contents
+
 - [Hardware](#hardware)
 - [Software Required](#software)
 - [AMT21 Encoders](#amt21-encoders)
@@ -29,7 +30,7 @@
 ## Software
 
 - [Arduino IDE](https://www.arduino.cc/en/Main/Software)
-- [AMT21 Arduino Sample Code](https://github.com/cui-dtarry/AMT21_RS485_Sample_Code_Mega)
+- [AMT21 Arduino Sample Code](https://github.com/cuidevices/AMT21_RS485_Sample_Code_Mega)
 - [AMT Viewpoint](https://www.cuidevices.com/amt-viewpoint) *optional, for updating firmware*
 
 ## AMT21 Encoders
