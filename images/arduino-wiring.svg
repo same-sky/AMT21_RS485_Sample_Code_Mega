@@ -24,8 +24,8 @@
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
      inkscape:zoom="0.73139029"
-     inkscape:cx="74.515619"
-     inkscape:cy="451.87912"
+     inkscape:cx="240.63759"
+     inkscape:cy="518.87481"
      inkscape:window-width="1920"
      inkscape:window-height="1017"
      inkscape:window-x="-8"
@@ -18860,7 +18860,7 @@
        sodipodi:nodetypes="ccc" />
     <path
        id="path2389"
-       d="M 256.68493,0 V 26.109 H -268.911 v -360.417 h 29.915"
+       d="M 0.59503884,0 0.50895623,26.109 H -268.911 v -360.417 h 29.915"
        style="fill:none;stroke:#40d037;stroke-width:2.158;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:13.333;stroke-dasharray:none;stroke-opacity:1"
        transform="matrix(0.35277776,0,0,-0.35277776,144.4408,47.232181)"
        clip-path="url(#clipPath2390)"
