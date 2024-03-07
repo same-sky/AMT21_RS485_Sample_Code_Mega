@@ -233,8 +233,6 @@ Serial1.write(address + RS485_TURNS);
 
 Now that our code has been created, we can load it onto the Arduino and get talking to an encoder. Open the serial monitor, make sure the data rate is set to 115200, and see the encoder work.
 
-![Arduino serial terminal](images/arduino-serial.png)
-
 ### Multiple Encoders
 
 One benefit of an RS-485 device is that you can talk to multiple encoders on the same bus. To do this we will need to set the encoders to have different addresses using AMT Viewpoint.
@@ -295,5 +293,3 @@ void loop()
 ```
 
 After data is transferred there is a minimum time before the chip select line can be released. This is specified in the datasheet as 3 microseconds. For slower data rates this is observed naturally, but we will implement it anyways.
-
-![Arduino serial terminal with multiple encoders](images/arduino-serial-multiple.png)
